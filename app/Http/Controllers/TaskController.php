@@ -2,75 +2,93 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Dto\TaskDto;
 use App\Models\Task;
 use App\Models\Technician;
 use Illuminate\Http\Request;
 
 class TaskController extends Controller
 {
-    public function match() {
-        $tasks = Task::all(); // Retrieve all tasks from the database
-        $technicians = Technician::with('skills')->get(); // Retrieve all technicians from the database
-    
-        // Sort tasks based on urgency (High, Medium, Low)
-        $tasks = $tasks->sortBy(function ($task) {
-            return ['High' => 1, 'Medium' => 2, 'Low' => 3][$task->urgency];
-        });
-    
-        $matchedTasks = [];
-    
-        // For each task, we try to find suitable technicians
+    // Match tasks by technicians
+    public function match() 
+    {
+        // Get all tasks and sort them by urgency
+        $tasks = Task::orderByRaw("FIELD(urgency, 'High', 'Medium', 'Low')")
+            ->get();
+
+        $skillNames = $tasks->pluck("required_skill")->toArray();
+
+        $technicians = Technician::whereHas('skills', function ($query) use ($skillNames) {
+            $query->whereIn('name', $skillNames);
+        })->get();
+
+        $totalWorkDays = 0;
+        $workDays = [];
+
         foreach ($tasks as $task) {
-            $assignedTechnicians = [];
-            $technicianAssignments = [];
-    
-            // Loop to assign technicians to the task
-            $availableTechnicians = $technicians->filter(function ($technician) use ($task) {
-                return in_array($task->required_skill, $technician->skills->pluck('name')->toArray());
+            $workDays[$task->id] = [];
+            
+            $matchingTechnicians = $technicians->filter(function ($technician) use ($task) {
+                return  in_array(
+                    $task->required_skill,
+                    $technician->skills->pluck('name')->toArray(), 
+                );
             });
-    
-            $totalDaysRequired = $task->duration; // The number of days required for this task
-    
-            foreach ($availableTechnicians as $technician) {
-                // Check if technician is available for the required number of days
-                if (count($assignedTechnicians) < $task->required_technicians) {
-                    // Check technician's availability for each day in the task's duration
-                    $assignedTechnicians[] = [
-                        'id' => $technician->id,
-                        'name' => $technician->name,
-                        'workDays' => $totalDaysRequired,
-                    ];
-                    $technicianAssignments[$technician->id] = $technician->name;
+
+            if (count($matchingTechnicians) < $task->required_technicians) {
+                return response()->json([
+                    'message' => 'Not enough technicians for matching.'
+                ], 400);
+            }
+
+            $task->technicians = $matchingTechnicians->toArray();
+            $task->remain = $task->duration;
+
+            $totalWorkDays += $task->duration;
+        }
+
+        for ($i = 0; $i < $totalWorkDays; $i++) {
+            $technicians = Technician::with('skills')->get();
+            $assignedIds = [];
+
+            $workDays[$i] = [
+                "tasks" => [],
+            ];
+
+            for ($j = 0; $j < count($tasks); $j++) {
+                $task = $tasks[$j];
+                $workDays[$i]['tasks'][$j] = new TaskDto($task);
+
+                $matchTechnicians = $technicians->filter(function ($technician) use ($task, $assignedIds) {
+                    $assigned = in_array($technician->id,  $assignedIds);
+                    $skillMatched = in_array(
+                        $task->required_skill,
+                        $technician->skills->pluck('name')->toArray()
+                    );
+
+                    return !$assigned && $skillMatched;
+                });
+
+                if ($task->remain > 0 && (count($matchTechnicians) >= $task->required_technicians)) {
+                    $assigned = $matchTechnicians->take($task->required_technicians)->values();
+                    $workDays[$i]['tasks'][$j]->assigned = $assigned->toArray();
+                    $assignedIds = array_merge($assignedIds, $assigned->pluck('id')->toArray());
+                    $task->remain = $task->remain - 1;
                 }
             }
-    
-            if (count($assignedTechnicians) < $task->required_technicians) {
-                return response()->json(['error' => 'Not enough technicians available for task'], 400);
-            }
-    
-            // Store the task with assigned technicians
-            $matchedTasks[] = [
-                'id' => $task->id,
-                'title' => $task->title,
-                'required_skill' => $task->required_skill,
-                'urgency' => $task->urgency,
-                'duration' => $task->duration,
-                'required_technicians' => $task->required_technicians,
-                'assignedTechnicians' => $assignedTechnicians,
-            ];
         }
-    
-        return response()->json(['tasks' => $matchedTasks]);
+
+        $workDays = collect($workDays)->filter(function ($item) {
+            return !empty($item);
+        })->filter(function($item) {
+            return !collect($item['tasks'])->every(function ($task) {
+                return empty($task->assigned);
+            });
+        });
+
+        return response()->json($workDays, 200);
     }
 
-    private function getAvailableTechniciansForTask($task, $technicians)
-    {
-        // Find technicians who have the required skill
-        return $technicians->filter(function ($technician) use ($task) {
-            return in_array($task->required_skill, $technician->skills->pluck('name')->toArray());
-        })->values();
-    }
-    
     // Create a new task
     public function store(Request $request)
     {

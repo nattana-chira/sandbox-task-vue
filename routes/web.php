@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Route;
 //     return view('welcome');
 // });
 
+// Route::get('/tasks-match', [TaskController::class, 'match']);
+
 Route::get('{any}', function () {
     return view('welcome');  // The main Blade view where your Vue app will mount
 })->where('any', '.*');

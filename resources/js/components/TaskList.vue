@@ -55,9 +55,11 @@
     </table>
 
     <div class="mt-10">
-      <h1 class="text-2xl font-semibold mb-4">Match Result:</h1>
+      <h1 class="text-2xl font-semibold mb-4">
+        Match Result: <span class="text-green-500" v-if="workDays.length">Total Work Days {{ workDays.length }}</span>
+      </h1>
     
-      <table class="min-w-full table-auto">
+      <table class="min-w-full border-collapse table-auto">
         <thead>
           <tr class="border">
             <th class="px-4 py-2 border">Task Title</th>
@@ -65,12 +67,16 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="task in matchTasks" :key="task.id" class="border">
-            <td class="px-4 py-2 border">{{ task.title }}</td>
+          <tr v-for="(workDay, i) in workDays" :key="i" class="border">
+            <td class="px-4 py-2 border">Day {{ i+1 }}</td>
+
             <td class="px-4 py-2 border">
-              <ul>
-                <li v-for="technician in task.assignedTechnicians" :key="technician.id">
-                  {{ technician.name }} - Days: {{ technician.workDays }}
+              <ul v-for="(task, j) in workDay.tasks" :key="j">
+                <li v-if="task.assigned.length > 0">
+                  <div class="font-bold">{{ task.title }} </div>
+                  <div v-for="(technician, k) in task.assigned" :key="k">
+                    {{ technician.name }} [{{ technician.skills.map(skill => skill.name).join(', ') }}]
+                  </div>
                 </li>
               </ul>
             </td>
@@ -89,9 +95,7 @@ export default {
   data() {
     return {
       tasks: [],
-      matchTasks: [],
-      technicianWorkDays: {},
-      totalWorkDays: 0
+      workDays: []
     };
   },
   mounted() {
@@ -122,13 +126,12 @@ export default {
     },
     // Trigger the match process
     matchTechnicians() {
-      this.matchTasks = []
+      this.workDays = []
 
       axios.get('/api/tasks-match')
         .then(response => {
-          // Assuming response contains matched tasks and technicians
-          this.matchTasks = response.data.tasks;
           console.log("data tasks ", response.data)
+          this.workDays = response.data;
           alert("Technicians matched successfully!")
         })
         .catch(error => {
